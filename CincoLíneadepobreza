@@ -1,0 +1,146 @@
+# =========================
+# 0) Paquetes y semilla
+# =========================
+library(ABM)
+set.seed(1)
+
+# =========================
+# 1) Parámetros del modelo
+# =========================
+N      <- 5000
+Tmax   <- 36
+
+delay_prob_base <- 0.30
+lambda_cred     <- 0.30
+
+# Esquema tipo paper (beneficio por hijx + elegibilidad por pobreza)
+base_transfer_per_child <- 300   # monto por hijx
+max_children_paid       <- 2     # límite de hijxs cubiertos
+poverty_line_list       <- c(3000, 3750, 4500, 5250, 6000)  # CINCO niveles de línea de pobreza
+
+# =====================================
+# 2) Función para ejecutar simulación
+# =====================================
+run_simulation <- function(poverty_line) {
+  # Crear simulación
+  sim <- Simulation$new(N)
+  
+  seedA <- 10
+  for (i in 1:N) {
+    theta  <- rnorm(1, mean = 300, sd = 80)
+    cred0  <- 1 - delay_prob_base
+    state0 <- if (i <= seedA) "A" else "N"
+    
+    # número de hijxs (10-17) potencialmente beneficiarios
+    n_hijos <- sample(0:3, size = 1, prob = c(0.25, 0.40, 0.25, 0.10), replace = TRUE)
+    
+    # ingreso del hogar (excluye transfer y salario del menor)
+    Y_hogar <- rlnorm(1, meanlog = log(4000), sdlog = 0.5)
+    
+    # elegibilidad por pobreza (con el parámetro actual)
+    elegible <- (Y_hogar < poverty_line)
+    
+    sim$setState(i, list(
+      state0,
+      theta     = theta,
+      cred      = cred0,
+      n_hijos   = n_hijos,
+      Y_hogar   = Y_hogar,
+      elegible  = elegible
+    ))
+  }
+  
+  # Loggers (contadores automáticos)
+  sim$addLogger(newCounter("A", "A"))  # cuántos asisten
+  sim$addLogger(newCounter("N", "N"))  # cuántos no asisten
+  
+  # Handler mensual
+  tick_handler <- function(time, sim, agent) {
+    for (i in 1:N) {
+      ai <- getAgent(sim, i)
+      st <- getState(ai)
+      
+      # beneficio por hijx (si elegible), limitado por max_children_paid
+      hijos_cubiertos <- min(st$n_hijos, max_children_paid)
+      transfer_eff    <- if (st$elegible) base_transfer_per_child * hijos_cubiertos else 0
+      benefit         <- transfer_eff * st$cred
+      
+      # Regla de decisión mínima:
+      new_state <- if (benefit >= st$theta) "A" else "N"
+      
+      # Si asiste, "experimento" de pago a tiempo
+      paid_on_time <- (new_state == "A") && (runif(1) > delay_prob_base)
+      
+      # Actualizar credibilidad (promedio móvil)
+      cred_new <- (1 - lambda_cred) * st$cred + lambda_cred * as.numeric(paid_on_time)
+      
+      # Guardamos nuevo estado + atributos
+      setState(ai, list(
+        new_state,
+        theta     = st$theta,
+        cred      = cred_new,
+        n_hijos   = st$n_hijos,
+        Y_hogar   = st$Y_hogar,
+        elegible  = st$elegible
+      ))
+    }
+    
+    if (time < Tmax) schedule(agent, newEvent(time + 1, tick_handler))
+  }
+  
+  # Ejecutar simulación
+  schedule(sim$get, newEvent(0, tick_handler))
+  res <- sim$run(0:Tmax)
+  res$attend <- res$A / N
+  res$poverty_line <- poverty_line  # agregar identificador
+  
+  return(res)
+}
+
+# ==============================
+# 3) Ejecutar las cinco simulaciones  ####  NEW. AQUÍ ESTÁ EL CAMBIO PORQUE CORREMOS VARIAS SIMULACIONES Y NO SOLAMENTE UNA
+# ==============================
+results_list <- list()
+
+for (j in 1:length(poverty_line_list)) {
+  cat("Ejecutando simulación", j, "de", length(poverty_line_list), 
+      "- poverty_line =", poverty_line_list[j], "\n")
+  results_list[[j]] <- run_simulation(poverty_line_list[j])
+}
+
+# Combinar resultados
+all_results <- do.call(rbind, results_list)
+
+# ==============================
+# 4) Gráfico comparativo
+# ==============================
+library(ggplot2)
+
+# Crear etiquetas más descriptivas para la leyenda
+all_results$poverty_line_label <- paste("Línea pobreza =", all_results$poverty_line)
+
+p <- ggplot(all_results, aes(x = times, y = attend, color = factor(poverty_line), 
+                             group = factor(poverty_line))) +
+  geom_line(size = 1.2, alpha = 0.8) +
+  geom_point(size = 0.6, alpha = 0.6) +
+  coord_cartesian(ylim = c(0, 1)) +
+  labs(title = "Comparación: CCT con diferentes líneas de pobreza",
+       subtitle = paste("Transfer por hijo =", base_transfer_per_child, 
+                        "- Máx hijos cubiertos =", max_children_paid),
+       x = "Mes", 
+       y = "% que asiste",
+       color = "Línea de pobreza") +
+  scale_color_manual(
+    values = c("3000" = "#E41A1C", "3750" = "#377EB8", "4500" = "#4DAF4A", 
+               "5250" = "#984EA3", "6000" = "#FF7F00"),
+    labels = c("3000" = "$3,000", "3750" = "$3,750", "4500" = "$4,500",
+               "5250" = "$5,250", "6000" = "$6,000")
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(legend.position = "top",
+        legend.text = element_text(size = 10))
+
+p
+
+# Guardar gráfico
+ggsave("asistencia_cct_poverty_lines.png", plot = p, width = 11, height = 7, dpi = 300)
