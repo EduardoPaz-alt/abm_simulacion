@@ -1,0 +1,67 @@
+1.- Se ejecutó el modelo sin cambios.  Se identificó que
+comienza en niveles  cercanos a un 87.5% o superior
+de asistencia inicialmente y luego hay 
+un descenso acelerado culminando en el mes  36
+con un nivel cercano al 12.5%
+
+2.-Se ejecutó el modelo con el limite de pagos
+por el número de hijos. Se observó que 
+
+a) Se observó que condicionar el subsidio al número
+de hijos implicó una disminución en la asistencia.
+
+Entre menor sea el límite de hijos implica una
+disminución en la asistencia. Podemos hipotéticamente
+proponer que la falta de subsidio a hijos subsecuentes
+implica que no haya incentivos para enviarlos a la escuela
+
+
+3) La línea de pobreza también afecta el nivel inicial
+de asistencia a la escuela aunque no va a afectar e
+ninguno de los casos la caída. La cual al parecer tiene 
+una mayor relación con la puntualidad en el pago.
+
+4) De esta manera podemos discernir las variables en dos
+tipos.
+
+++++Variables que afectan el número inicial de familias
+que asisten a la escuela ==>> Límites x hijos y línea 
+de pobreza
++++++Versus la caída en la asistencia ==>> Puntualidad en 
+el pago.
+
+ODD + D
+
+1) Overview (Visión general).
+
+1.1. El modelo responde a la pregunta. ¿Qué porcentaje de
+familias sus hijos asisten a la escual en función
+de el monto de pago, el tipo de pago (fijo o variable)
+y la puntualidad en el pago.
+
+1.2  Entidades y escalas
+
+1.2.1 Entidad: ¿agente? El agente es la familia.
+
+1.2.2 
+
+1.2.4. El tiempo total son 36 meses.
+
+1.3 Proceso y programación
+
+1.3.1 Se plantea un tick para cada mes.
+1.3.2.
+
+
+Entregables
+
+a.Código
+
+
+b.Gráficas
+
+
+c. ODD+D
+
+
+
