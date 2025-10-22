@@ -133,13 +133,3 @@ p
 
 # Guardar gráfico
 ggsave("asistencia_cct_comparacion.png", plot = p, width = 10, height = 6, dpi = 300)
-
-# ==============================
-# 5) Resultados finales (opcional)
-# ==============================
-cat("\n=== RESUMEN DE RESULTADOS ===\n")
-for (j in 1:length(max_children_paid_list)) {
-  final_attend <- tail(results_list[[j]]$attend, 1)
-  cat("Max children =", max_children_paid_list[j], 
-      "-> Asistencia final:", round(final_attend * 100, 1), "%\n")
-}
