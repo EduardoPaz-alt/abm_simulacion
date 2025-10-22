@@ -1,0 +1,230 @@
+# =========================
+# 0) Paquetes y semilla
+# =========================
+library(ABM)
+set.seed(1)
+
+# =========================
+# 1) Parámetros del modelo
+# =========================
+N      <- 5000
+Tmax   <- 36
+
+# Cinco niveles de puntualidad (probabilidad de retraso en pagos)
+delay_prob_base_list <- c(0.10, 0.20, 0.30, 0.40, 0.50)  # 10% a 50% de retraso
+lambda_cred          <- 0.30
+
+# Esquema tipo paper (beneficio por hijx + elegibilidad por pobreza)
+base_transfer_per_child <- 300   # monto por hijx
+max_children_paid       <- 2     # límite de hijxs cubiertos
+poverty_line            <- 4500  # línea de pobreza mensual del hogar
+
+# =====================================
+# 2) Función para ejecutar simulación
+# =====================================
+run_simulation <- function(delay_prob_base) {
+  # Crear simulación
+  sim <- Simulation$new(N)
+  
+  seedA <- 10
+  for (i in 1:N) {
+    theta  <- rnorm(1, mean = 300, sd = 80)
+    cred0  <- 1 - delay_prob_base  # Credibilidad inicial basada en puntualidad esperada
+    state0 <- if (i <= seedA) "A" else "N"
+    
+    # número de hijxs (10-17) potencialmente beneficiarios
+    n_hijos <- sample(0:3, size = 1, prob = c(0.25, 0.40, 0.25, 0.10), replace = TRUE)
+    
+    # ingreso del hogar (excluye transfer y salario del menor)
+    Y_hogar <- rlnorm(1, meanlog = log(4000), sdlog = 0.5)
+    
+    # elegibilidad por pobreza
+    elegible <- (Y_hogar < poverty_line)
+    
+    sim$setState(i, list(
+      state0,
+      theta     = theta,
+      cred      = cred0,
+      n_hijos   = n_hijos,
+      Y_hogar   = Y_hogar,
+      elegible  = elegible
+    ))
+  }
+  
+  # Loggers (contadores automáticos)
+  sim$addLogger(newCounter("A", "A"))  # cuántos asisten
+  sim$addLogger(newCounter("N", "N"))  # cuántos no asisten
+  
+  # Handler mensual
+  tick_handler <- function(time, sim, agent) {
+    for (i in 1:N) {
+      ai <- getAgent(sim, i)
+      st <- getState(ai)
+      
+      # beneficio por hijx (si elegible), limitado por max_children_paid
+      hijos_cubiertos <- min(st$n_hijos, max_children_paid)
+      transfer_eff    <- if (st$elegible) base_transfer_per_child * hijos_cubiertos else 0
+      benefit         <- transfer_eff * st$cred
+      
+      # Regla de decisión mínima:
+      new_state <- if (benefit >= st$theta) "A" else "N"
+      
+      # Si asiste, "experimento" de pago a tiempo (con la probabilidad de retraso actual)
+      paid_on_time <- (new_state == "A") && (runif(1) > delay_prob_base)
+      
+      # Actualizar credibilidad (promedio móvil)
+      cred_new <- (1 - lambda_cred) * st$cred + lambda_cred * as.numeric(paid_on_time)
+      
+      # Guardamos nuevo estado + atributos
+      setState(ai, list(
+        new_state,
+        theta     = st$theta,
+        cred      = cred_new,
+        n_hijos   = st$n_hijos,
+        Y_hogar   = st$Y_hogar,
+        elegible  = st$elegible
+      ))
+    }
+    
+    if (time < Tmax) schedule(agent, newEvent(time + 1, tick_handler))
+  }
+  
+  # Ejecutar simulación
+  schedule(sim$get, newEvent(0, tick_handler))
+  res <- sim$run(0:Tmax)
+  res$attend <- res$A / N
+  res$delay_prob <- delay_prob_base  # agregar identificador
+  res$puntualidad <- 1 - delay_prob_base  # puntualidad como complemento
+  
+  return(res)
+}
+
+# ==============================
+# 3) Ejecutar las cinco simulaciones
+# ==============================
+results_list <- list()
+
+for (j in 1:length(delay_prob_base_list)) {
+  cat("Ejecutando simulación", j, "de", length(delay_prob_base_list), 
+      "- delay_prob_base =", delay_prob_base_list[j], 
+      "(Puntualidad =", round(1 - delay_prob_base_list[j], 2), ")\n")
+  results_list[[j]] <- run_simulation(delay_prob_base_list[j])
+}
+
+# Combinar resultados
+all_results <- do.call(rbind, results_list)
+
+# ==============================
+# 4) Gráfico comparativo
+# ==============================
+library(ggplot2)
+library(dplyr)
+
+# Crear etiquetas más descriptivas para la leyenda
+all_results$puntualidad_label <- paste("Puntualidad =", round(100 * (1 - all_results$delay_prob), 0), "%")
+
+p <- ggplot(all_results, aes(x = times, y = attend, color = factor(puntualidad_label), 
+                            group = factor(puntualidad_label))) +
+  geom_line(size = 1.2, alpha = 0.8) +
+  geom_point(size = 0.6, alpha = 0.6) +
+  coord_cartesian(ylim = c(0, 1)) +
+  labs(title = "Impacto de la puntualidad en los pagos sobre la asistencia",
+       subtitle = paste("Transfer por hijo =", base_transfer_per_child, 
+                       "- Línea pobreza =", poverty_line,
+                       "- Máx hijos =", max_children_paid),
+       x = "Mes", 
+       y = "% que asiste",
+       color = "Nivel de puntualidad") +
+  scale_color_manual(
+    values = c(
+      "Puntualidad = 90 %" = "#1f78b4",  # Azul - mejor puntualidad
+      "Puntualidad = 80 %" = "#33a02c",  # Verde
+      "Puntualidad = 70 %" = "#ff7f00",  # Naranja  
+      "Puntualidad = 60 %" = "#e31a1c",  # Rojo
+      "Puntualidad = 50 %" = "#6a3d9a"   # Púrpura - peor puntualidad
+    )
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(legend.position = "top",
+        legend.text = element_text(size = 10))
+
+p
+
+# Guardar gráfico
+ggsave("asistencia_cct_puntualidad.png", plot = p, width = 12, height = 7, dpi = 300)
+
+# ==============================
+# 5) Análisis de resultados
+# ==============================
+cat("\n=== RESUMEN DE RESULTADOS ===\n")
+cat("Parámetros fijos:\n")
+cat("- Transfer por hijo:", base_transfer_per_child, "\n")
+cat("- Línea de pobreza:", poverty_line, "\n")
+cat("- Máx hijos cubiertos:", max_children_paid, "\n")
+cat("- Lambda credibilidad:", lambda_cred, "\n")
+cat("- Tamaño muestra N:", N, "\n")
+cat("- Meses simulados Tmax:", Tmax, "\n\n")
+
+cat("Resultados por nivel de puntualidad:\n")
+summary_results <- data.frame()
+
+for (j in 1:length(delay_prob_base_list)) {
+  final_data <- results_list[[j]]
+  final_attend <- tail(final_data$attend, 1)
+  initial_attend <- head(final_data$attend, 1)
+  
+  # Calcular credibilidad promedio final
+  # (Nota: necesitarías extraer esto del estado de los agentes, pero lo aproximamos)
+  cat("Puntualidad =", round(100 * (1 - delay_prob_base_list[j]), 0), "%",
+      "(Retraso =", round(100 * delay_prob_base_list[j], 0), "%)",
+      "-> Asistencia final:", round(final_attend * 100, 1), "%",
+      "| Cambio:", round((final_attend - initial_attend) * 100, 1), "pp\n")
+  
+  # Almacenar para gráfico de resumen
+  summary_results <- rbind(summary_results, data.frame(
+    puntualidad = 1 - delay_prob_base_list[j],
+    retraso = delay_prob_base_list[j],
+    asistencia_final = final_attend
+  ))
+}
+
+# Gráfico de resumen: asistencia final vs puntualidad
+p_summary <- ggplot(summary_results, aes(x = puntualidad, y = asistencia_final)) +
+  geom_point(size = 4, color = "steelblue") +
+  geom_line(size = 1.2, color = "steelblue", alpha = 0.7) +
+  geom_smooth(method = "lm", se = FALSE, color = "red", linetype = "dashed", alpha = 0.5) +
+  scale_x_continuous(labels = scales::percent) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(title = "Relación entre puntualidad y asistencia final",
+       subtitle = "Mayor puntualidad → Mayor asistencia sostenida",
+       x = "Puntualidad en pagos",
+       y = "Asistencia final (%)") +
+  theme_minimal(base_size = 14)
+
+p_summary
+
+ggsave("relacion_puntualidad_asistencia.png", plot = p_summary, width = 10, height = 6, dpi = 300)
+
+# ==============================
+# 6) Gráfico alternativo: tendencias suavizadas
+# ==============================
+p_smooth <- ggplot(all_results, aes(x = times, y = attend, color = factor(puntualidad_label))) +
+  geom_smooth(se = FALSE, size = 1.5, alpha = 0.8) +
+  coord_cartesian(ylim = c(0, 1)) +
+  labs(title = "Tendencias de asistencia por nivel de puntualidad (suavizadas)",
+       x = "Mes", y = "% que asiste",
+       color = "Nivel de puntualidad") +
+  scale_color_manual(
+    values = c(
+      "Puntualidad = 90 %" = "#1f78b4",
+      "Puntualidad = 80 %" = "#33a02c", 
+      "Puntualidad = 70 %" = "#ff7f00",
+      "Puntualidad = 60 %" = "#e31a1c",
+      "Puntualidad = 50 %" = "#6a3d9a"
+    )
+  ) +
+  theme_minimal(base_size = 14)
+
+p_smooth
+
+ggsave("asistencia_puntualidad_suavizada.png", plot = p_smooth, width = 12, height = 7, dpi = 300)
