@@ -114,14 +114,14 @@ tick_handler_corregido <- function(time, sim, agent) {
     
     ingreso_actual <- hogares$ingreso_hogar[i]
     
-    
+    # NUEVA LÓGICA: Probabilidad escalonada por nivel de ingreso
     prob_base <- ifelse(ingreso_actual < 1000, 0.8, 
                         ifelse(ingreso_actual < 2000, 0.6, 
                                ifelse(ingreso_actual < 3000, 0.4, 0.2)))
     
-    # Añadir aleatoriedad
+    # Aleatoriedad para evitar patrones perfectos
     prob_final <- prob_base + rnorm(1, 0, 0.1)
-    prob_final <- max(0, min(1, prob_final))
+    prob_final <- max(0, min(1, prob_final))  # Asegurar rango [0,1]
     
     new_state <- ifelse(runif(1) < prob_final, "T", "NT")
     
