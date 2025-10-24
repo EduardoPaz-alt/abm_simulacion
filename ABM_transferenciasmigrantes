@@ -1,0 +1,179 @@
+# =========================
+# 0) Paquetes y semilla
+# =========================
+library(ABM)        # Carga el paquete ABM: define Simulation, Event, counters, etc.
+library(readxl)     # Faltaba cargar readxl
+library(ggplot2)    # Movido aquí para cargarlo desde el inicio
+set.seed(1)         # Fija la semilla para que los resultados sean reproducibles
+
+# =========================
+# 0) Paquetes y datos
+# =========================
+DATA_PATH <- "e:/Proyectos_R/ABM_Flacso/hogares.xlsx"
+if (!file.exists(DATA_PATH)) stop("No se encontró: ", DATA_PATH)
+hogares <- read_excel(DATA_PATH)
+
+cols_needed <- c("sexo","n_hijos","edad","grado","zona")
+miss_cols <- setdiff(cols_needed, names(hogares))
+if (length(miss_cols) > 0) stop("Faltan columnas: ", paste(miss_cols, collapse=", "))
+
+# Ingreso del hogar: aquí sí lo usaremos para transferencias
+if (!"ingreso_hogar" %in% names(hogares)) {
+  stop("Se requiere la columna 'ingreso_hogar' para la regla de transferencias (>3000).")
+}
+
+# =========================
+# 1) Parámetros del modelo
+# =========================
+N      <- nrow(hogares)     # Usar el número real de hogares en los datos
+Tmax   <- 36       # Número de meses (ticks) a simular
+min_wage <- 3000                 # Monto mínimo de ingreso que debe tener un migrante para poder realizar la remesa
+transfer_amount <- 600           # Monto nominal mensual del programa ($600)
+
+
+hogares$sexoN <- ifelse(hogares$sexo == "M", 1, 0)
+
+# =====================================
+# 2) Crear simulación y estado inicial
+# =====================================
+sim <- Simulation$new(N) # Crea una simulación con N agentes
+
+seedT <- 10  # Cantidad de hogares que ya comienzan transfiriendo en t=0
+
+
+trabaja <- runif(N) < 0.40   # 40% de los hogares trabajan (TRUE/FALSE)
+
+for (i in 1:N) {
+  state0 <- if (i <= seedT) "T" else "NT"  # Primeros 'seedT' agentes arrancan en "T", el resto "NT"
+  sim$setState(i, list(state0, trabaja = trabaja[i])) 
+}
+
+# ======================================
+# 3) Loggers (contadores automáticos)
+# ======================================
+sim$addLogger(newCounter("T", "T"))  # cuántos transfieren
+sim$addLogger(newCounter("NT", "NT"))  # cuántos no transfieren
+
+# =========================================================
+# 4) Handler mensual (la "dinámica" que corre cada mes)
+# ========================================================
+tick_handler <- function(time, sim, agent) {
+  for (i in 1:N) {
+    ai <- getAgent(sim, i)
+    st <- getState(ai)
+    
+    new_state <- ifelse(transfer_amount >= hogares$ingreso_hogar[i], "T", "NT")
+    
+
+    setState(ai, list(new_state, trabaja = st$trabaja))
+  }
+
+
+  if (time < Tmax) schedule(agent, newEvent(time + 1, tick_handler))
+}
+
+# ==============================
+# 5) Ejecutar la simulación
+# ==============================
+schedule(sim$get, newEvent(0, tick_handler))
+res <- sim$run(0:Tmax)
+
+
+cat("Nombres de las columnas en res:\n")
+print(names(res))
+cat("Dimensiones de res:", dim(res), "\n")
+
+
+res$porc_transfiere <- res$T / (res$T + res$NT)
+
+
+# cat("Proporción promedio que transfiere:", round(mean(res$porc_transfiere, na.rm = TRUE) * 100, 1), "%\n")
+# cat("Rango de porcentajes:", round(range(res$porc_transfiere) * 100, 1), "%\n")
+
+
+cat("Valores únicos en T:", unique(res$T), "\n")
+cat("Valores únicos en NT:", unique(res$NT), "\n")
+
+# # Revisar algunos hogares de ejemplo
+# cat("Revisando primeros 10 hogares:\n")
+# for (i in 1:min(10, N)) {
+#   ingreso <- hogares$ingreso_hogar[i]
+#   decision <- ifelse(transfer_amount >= ingreso, "T", "NT")
+#   cat("Hogar", i, "- Ingreso:", ingreso, "- Decisión:", decision, "\n")
+# }
+# 
+
+
+sim_corregida <- Simulation$new(N)
+
+
+tick_handler_corregido <- function(time, sim, agent) {
+  for (i in 1:N) {
+    ai <- getAgent(sim, i)
+    st <- getState(ai)
+    
+    ingreso_actual <- hogares$ingreso_hogar[i]
+    
+    
+    prob_base <- ifelse(ingreso_actual < 1000, 0.8, 
+                        ifelse(ingreso_actual < 2000, 0.6, 
+                               ifelse(ingreso_actual < 3000, 0.4, 0.2)))
+    
+    # Añadir aleatoriedad
+    prob_final <- prob_base + rnorm(1, 0, 0.1)
+    prob_final <- max(0, min(1, prob_final))
+    
+    new_state <- ifelse(runif(1) < prob_final, "T", "NT")
+    
+    setState(ai, list(new_state, trabaja = st$trabaja))
+  }
+  
+  if (time < Tmax) schedule(agent, newEvent(time + 1, tick_handler_corregido))
+}
+
+# Re-inicializar estados
+for (i in 1:N) {
+  state0 <- if (i <= 10) "T" else "NT"
+  sim_corregida$setState(i, list(state0, trabaja = trabaja[i]))
+}
+
+
+sim_corregida$addLogger(newCounter("T", "T"))
+sim_corregida$addLogger(newCounter("NT", "NT"))
+
+
+schedule(sim_corregida$get, newEvent(0, tick_handler_corregido))
+res_corregido <- sim_corregida$run(0:Tmax)
+
+cat("Nombres de las columnas en res_corregido:\n")
+print(names(res_corregido))
+
+res_corregido$porc_transfiere <- res_corregido$T / (res_corregido$T + res_corregido$NT)
+
+cat("Proporción promedio que transfiere:", round(mean(res_corregido$porc_transfiere, na.rm = TRUE) * 100, 1), "%\n")
+cat("Rango de porcentajes:", round(range(res_corregido$porc_transfiere) * 100, 1), "%\n")
+
+# ==============================
+# 6) Gráfico
+# ==============================
+
+p <- ggplot(res_corregido, aes(x = times, y = porc_transfiere)) +
+  geom_area(fill = "yellow2", alpha = 0.12) +
+  geom_line(size = 1.4, color = "orange", lineend = "round") +
+  coord_cartesian(ylim = c(0, 1)) +
+  labs(
+    title = "% de hogares que reciben transferencias",
+    subtitle = paste("Simulación con", N, "hogares durante", Tmax, "meses"),
+    x = "Mes", 
+    y = "% que transfiere"
+  ) +
+  scale_y_continuous(labels = scales::percent) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+
+print(p)
+
+
