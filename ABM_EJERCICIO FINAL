@@ -1,0 +1,387 @@
+
+###############  DESPUÉS DE MUCHO TRABAJO AQUÍ ESTÁ EL CÓDIGO
+###############  LA ALEATORIEDAD ES MUY BAJA, YA QUE SÓLO INTEGRÉ UN ELEMENTO
+#############****************************IMPORTANTE+++++++++++++++++++++++++  CONFIGURA EL PATH DE LA DB
+
+
+
+library(ABM)
+library(dplyr)
+library(ggplot2)
+library(readxl)
+
+migrantes <- read_csv("://BD_Migración_2023.csv")   ## aquí hay ajustar dependiendo donde esté la base de datos   ## aquí hay ajustar dependiendo donde esté la base de datos
+head(migrantes)
+
+
+cat("Nombres de columnas en el dataset:\n")
+print(names(migrantes))
+
+subsidio_paisano <- 2000
+subsidio_emprender <- 25000
+subsidio_becas <- 120000
+
+umbral_paisano <- 30
+apoyo_emprender <- 2
+
+
+params <- list(
+  subsidio_paisano = subsidio_paisano,
+  subsidio_emprender = subsidio_emprender,
+  subsidio_becas = subsidio_becas,
+  umbral_paisano = umbral_paisano,
+  apoyo_emprender = apoyo_emprender
+)
+
+migrantes <- migrantes %>%
+  mutate(
+    elegible_umbral_paisano = NAC == 77,
+    elegible_apoyo_emprender = SEX == 2,
+    elegible_apoyo_becas = EDAD < 17 & EDAD > 12,
+    
+    apoyo_tot = subsidio_paisano * elegible_umbral_paisano + 
+      subsidio_emprender * elegible_apoyo_emprender + 
+      subsidio_becas * elegible_apoyo_becas,
+    
+    
+    state0 = sample(c("B", "M", "A"), n(), replace = TRUE, prob = c(0.7, 0.2, 0.1))   ####  "B" NO RECIBE SUBSIDIOS; "M" RECIBE SUBSIDIOS MENORES A 20,000 Y "A" SUBSIDIOS MAYORES A 20,000
+  )
+
+#### validación para evitar errores
+cat("\nResumen de las nuevas variables:\n")
+cat("elegible_umbral_paisano:", sum(migrantes$elegible_umbral_paisano), "TRUEs\n")
+cat("elegible_apoyo_emprender:", sum(migrantes$elegible_apoyo_emprender), "TRUEs\n")
+cat("elegible_apoyo_becas:", sum(migrantes$elegible_apoyo_becas), "TRUEs\n")
+cat("Distribución de state0:\n")
+print(table(migrantes$state0))
+cat("Resumen de apoyo_tot:\n")
+print(summary(migrantes$apoyo_tot))
+
+N <- 100        ####nrow(migrantes)  AQUÍ SÓLO MANEJÉ 100 PARA QUE CORRA MÁS RÁPIDO PERO LA BASE DE DATOS ES MÁS GRANDE Y LLEVA VARIAS HORAS EL PROCESO
+Tmax <- 5
+sim <- Simulation$new(N)
+
+cat("\nCreando simulación con", N, "agentes...\n")
+
+
+for (i in 1:N) {
+  sim$setState(
+    i,
+    list(
+      state0 = migrantes$state0[i],
+      elegible_umbral_paisano = migrantes$elegible_umbral_paisano[i],
+      elegible_apoyo_emprender = migrantes$elegible_apoyo_emprender[i],
+      elegible_apoyo_becas = migrantes$elegible_apoyo_becas[i],
+      apoyo_tot = migrantes$apoyo_tot[i]
+    )
+  )
+}
+
+cat("Agentes inicializados exitosamente.\n")
+
+#### segunda VALIDACIÓN
+tryCatch({
+  agente_test <- sim$agent(1)
+  cat("✓ sim$agent(1) FUNCIONA\n")
+  cat("  Clase del agente:", class(agente_test), "\n")
+  cat("  Métodos del agente:", paste(methods(class = class(agente_test)), collapse = ", "), "\n")
+}, error = function(e) {
+  cat("✗ Error con sim$agent(1):", e$message, "\n")
+})
+
+
+for (periodo in 1:Tmax) {
+  cat("Procesando periodo:", periodo, "\n")
+  
+  # Contadores para estadísticas
+  contador_B <- 0
+  contador_M <- 0
+  contador_A <- 0
+  
+  
+  for (i in 1:N) {
+    
+    agente <- sim$agent(i)
+    
+    
+    
+    elegible_paisano <- migrantes$elegible_umbral_paisano[i]
+    elegible_emprender <- migrantes$elegible_apoyo_emprender[i]
+    elegible_becas <- migrantes$elegible_apoyo_becas[i]
+    
+    
+    subsidio_paisano <- if (elegible_paisano) params$subsidio_paisano else 0
+    subsidio_emprender <- if (elegible_emprender) params$subsidio_emprender else 0
+    subsidio_becas <- if (elegible_becas) params$subsidio_becas else 0
+    
+    total_subsidio <- subsidio_paisano + subsidio_emprender + subsidio_becas
+    
+    
+    if (periodo == 1) {
+      estado_actual <- migrantes$state0[i]
+    } else {
+      
+      estado_actual <- "B" # Valor por defecto
+    }
+    
+    
+    
+    if (total_subsidio > 0) {
+      
+      prob_base <- min(0.8, total_subsidio / 50000)
+      
+      
+      factor_edad <- if (migrantes$EDAD[i] > 25 & migrantes$EDAD[i] < 50) {
+        1.5  # Aumenta 1.5 veces si está entre 25 y 50 años
+      } else {
+        1.0  # Sin cambio para otras edades
+      }
+      
+      
+      prob_mejorar_ajustada <- min(1.0, prob_base * factor_edad)
+      
+      
+      if (runif(1) < prob_mejorar_ajustada) {
+        nuevo_estado <- if (total_subsidio > 20000) "A" else "M"
+      } else {
+        nuevo_estado <- estado_actual
+      }
+    } else {
+      nuevo_estado <- "B"
+    }
+    
+    
+    if (nuevo_estado == "B") contador_B <- contador_B + 1
+    if (nuevo_estado == "M") contador_M <- contador_M + 1
+    if (nuevo_estado == "A") contador_A <- contador_A + 1
+    
+    
+    sim$setState(i, list(
+      state0 = nuevo_estado,
+      elegible_umbral_paisano = elegible_paisano,
+      elegible_apoyo_emprender = elegible_emprender,
+      elegible_apoyo_becas = elegible_becas,
+      apoyo_tot = migrantes$apoyo_tot[i]
+    ))
+  }
+  
+  cat("  Estados: B=", contador_B, "M=", contador_M, "A=", contador_A, "\n")
+}
+
+cat("Simulación completada!\n")
+
+
+
+
+
+
+
+
+sim_df <- migrantes %>%
+  mutate(
+    state_current = state0,
+    total_subsidy_actual = apoyo_tot,
+    periodo_actual = 0
+  )
+
+
+for (periodo in 1:Tmax) {
+  cat("Procesando periodo:", periodo, "\n")
+  
+  for (i in 1:N) {
+    
+    subsidio_paisano <- if (sim_df$elegible_umbral_paisano[i]) params$subsidio_paisano else 0
+    subsidio_emprender <- if (sim_df$elegible_apoyo_emprender[i]) params$subsidio_emprender else 0
+    subsidio_becas <- if (sim_df$elegible_apoyo_becas[i]) params$subsidio_becas else 0
+    
+    total_subsidio <- subsidio_paisano + subsidio_emprender + subsidio_becas
+    
+    
+    estado_actual <- sim_df$state_current[i]
+    
+    if (total_subsidio > 0) {
+      
+      prob_base <- min(0.8, total_subsidio / 50000)
+      
+      
+      factor_edad <- if (sim_df$EDAD[i] > 25 & sim_df$EDAD[i] < 50) {
+        1.5  # Aumenta 1.5 veces si está entre 25 y 50 años
+      } else {
+        1.0  # Sin cambio para otras edades
+      }
+      
+      
+      prob_mejorar_ajustada <- min(1.0, prob_base * factor_edad)
+      
+      
+      if (runif(1) < prob_mejorar_ajustada) {
+        nuevo_estado <- if (total_subsidio > 20000) "A" else "M"
+      } else {
+        nuevo_estado <- estado_actual
+      }
+    } else {
+      nuevo_estado <- "B"
+    }
+    
+    
+    sim_df$state_current[i] <- nuevo_estado
+    sim_df$total_subsidy_actual[i] <- total_subsidio
+    sim_df$periodo_actual[i] <- periodo
+  }
+  
+  
+  estados <- table(sim_df$state_current)
+  cat("  Estados: B=", ifelse("B" %in% names(estados), estados["B"], 0),
+      "M=", ifelse("M" %in% names(estados), estados["M"], 0),
+      "A=", ifelse("A" %in% names(estados), estados["A"], 0), "\n")
+}
+
+cat("Simulación con dataframe completada!\n")
+
+
+resultados <- sim_df
+
+
+cat("\n=== RESULTADOS FINALES ===\n")
+cat("Distribución inicial:", table(migrantes$state0), "\n")
+cat("Distribución final:", table(resultados$state_current), "\n")
+
+
+# =========================
+
+cat("\n=== CREANDO GRÁFICAS DE DISTRIBUCIÓN POR PERIODO ===\n")
+
+evolucion_estados <- data.frame(
+  periodo = integer(),
+  estado = character(),
+  frecuencia = integer(),
+  proporcion = numeric(),
+  stringsAsFactors = FALSE
+)
+
+
+sim_evolucion <- migrantes %>%
+  mutate(
+    state_current = state0,
+    total_subsidy_actual = apoyo_tot
+  )
+
+
+estados_inicial <- table(sim_evolucion$state_current)
+for (estado in names(estados_inicial)) {
+  evolucion_estados <- rbind(evolucion_estados, data.frame(
+    periodo = 0,
+    estado = estado,
+    frecuencia = as.numeric(estados_inicial[estado]),
+    proporcion = as.numeric(estados_inicial[estado]) / N
+  ))
+}
+
+
+for (periodo in 1:Tmax) {
+  cat("Procesando periodo para gráficas:", periodo, "\n")
+  
+  for (i in 1:N) {
+    
+    subsidio_paisano <- if (sim_evolucion$elegible_umbral_paisano[i]) params$subsidio_paisano else 0
+    subsidio_emprender <- if (sim_evolucion$elegible_apoyo_emprender[i]) params$subsidio_emprender else 0
+    subsidio_becas <- if (sim_evolucion$elegible_apoyo_becas[i]) params$subsidio_becas else 0
+    
+    total_subsidio <- subsidio_paisano + subsidio_emprender + subsidio_becas
+    
+    
+    estado_actual <- sim_evolucion$state_current[i]
+    
+    if (total_subsidio > 0) {
+      
+      prob_base <- min(0.8, total_subsidio / 50000)
+      
+      
+      factor_edad <- if (sim_evolucion$EDAD[i] > 25 & sim_evolucion$EDAD[i] < 50) {
+        5.5  # Aumenta 1.5 veces si está entre 25 y 50 años
+      } else {
+        1.0  # Sin cambio para otras edades
+      }
+      
+      
+      prob_mejorar_ajustada <- min(1.0, prob_base * factor_edad)
+      
+      
+      if (runif(1) < prob_mejorar_ajustada) {
+        nuevo_estado <- if (total_subsidio > 20000) "A" else "M"
+      } else {
+        nuevo_estado <- estado_actual
+      }
+    } else {
+      nuevo_estado <- "B"
+    }
+    
+    
+    sim_evolucion$state_current[i] <- nuevo_estado
+    sim_evolucion$total_subsidy_actual[i] <- total_subsidio
+  }
+  
+  
+  estados_actual <- table(sim_evolucion$state_current)
+  for (estado in names(estados_actual)) {
+    evolucion_estados <- rbind(evolucion_estados, data.frame(
+      periodo = periodo,
+      estado = estado,
+      frecuencia = as.numeric(estados_actual[estado]),
+      proporcion = as.numeric(estados_actual[estado]) / N
+    ))
+  }
+}
+
+
+cat("\nResumen de datos de evolución:\n")
+print(head(evolucion_estados))
+cat("Periodos únicos:", unique(evolucion_estados$periodo), "\n")
+
+# =========================
+
+grafica_agrupadas <- ggplot(evolucion_estados, aes(x = factor(periodo), y = frecuencia, fill = estado)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(
+    title = "Frecuencia de Estados por Periodo",
+    subtitle = "Número de agentes en cada estado",
+    x = "Periodo (T)",
+    y = "Número de Agentes",
+    fill = "Estado"
+  ) +
+  scale_fill_manual(
+    values = c("B" = "#E41A1C", "M" = "#377EB8", "A" = "#4DAF4A"),
+    labels = c("B" = "Básico", "M" = "Medio", "A" = "Avanzado")
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 14, hjust = 0.5),
+    plot.subtitle = element_text(size = 12, hjust = 0.5),
+    legend.position = "bottom"
+  )
+
+print(grafica_agrupadas)
+
+# =========================
+
+grafica_heatmap <- ggplot(evolucion_estados, aes(x = factor(periodo), y = estado, fill = proporcion)) +
+  geom_tile(color = "white", linewidth = 1) +
+  geom_text(aes(label = paste0(round(proporcion * 100, 1), "%")), 
+            color = "white", fontface = "bold", size = 4) +
+  scale_fill_gradient(low = "#2166AC", high = "#B2182B", 
+                      labels = scales::percent,
+                      name = "Proporción") +
+  labs(
+    title = "Heatmap: Distribución de Estados por Periodo",
+    subtitle = "Intensidad del color indica la proporción",
+    x = "Periodo (T)",
+    y = "Estado"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 14, hjust = 0.5),
+    plot.subtitle = element_text(size = 12, hjust = 0.5),
+    panel.grid = element_blank()
+  )
+
+print(grafica_heatmap)
