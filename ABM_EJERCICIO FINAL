@@ -10,7 +10,7 @@ library(dplyr)
 library(ggplot2)
 library(readxl)
 
-migrantes <- read_csv("://BD_Migración_2023.csv")   ## aquí hay ajustar dependiendo donde esté la base de datos   ## aquí hay ajustar dependiendo donde esté la base de datos
+migrantes <- read_csv("https://portales.segob.gob.mx/work/models/PoliticaMigratoria/CEM/Estadisticas/BDatos/Migracion_Irregular/DwnldBD.php?f=BD_PerSitIrreg_2023.csv", show_col_types = FALSE)   ## aquí hay ajustar dependiendo donde esté la base de datos
 head(migrantes)
 
 
